@@ -1,0 +1,17 @@
+# Web server
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+psycopg[binary]>=3.2
+
+# Image + ML
+Pillow>=10.0
+transformers>=4.40
+torch>=2.0
+
+# Tip: to install CPU-only torch (smaller, ~200 MB instead of ~2 GB) on a
+# machine with no GPU, run this BEFORE pip install -r requirements.txt:
+#
+#     pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+# Then `pip install -r requirements.txt` will skip re-installing torch.
