@@ -1,12 +1,97 @@
+# InSpec AI gitignore
+
+# Environment files
 .env
 .env.*
 !.env.example
-__pycache__/
-*.pyc
+backend/.env
+backend/.env.*
+!backend/.env.example
+inspecai/.env
+inspecai/.env.*
+!inspecai/.env.example
+
+# Python virtual environments
 .venv/
 venv/
+env/
+ENV/
+backend/venv/
+backend/.venv/
+
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local runtime data
+uploads/
+backend/uploads/
+backend/video/uploads/
+backend/video/samples/
+backend/video/weight/
+tmp/
+temp/
+*.log
+logs/
+
+# Node/Next.js dependencies and build output
 node_modules/
+inspecai/node_modules/
 .next/
+inspecai/.next/
 out/
-.DS_Store
+inspecai/out/
+inspecai/build/
+coverage/
+inspecai/coverage/
+*.tsbuildinfo
+inspecai/next-env.d.ts
+
+# Package-manager logs
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+
+# Yarn/PnP local state
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Deployment/local platform state
+.vercel/
+.netlify/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# Local certificates/secrets
+*.pem
+*.key
+*.crt

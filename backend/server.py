@@ -1,26 +1,25 @@
 """
-InSpec AI local inference server.
+InSpec AI unified local inference server.
 
-The browser sends images to this FastAPI app. The app lazy-loads one
-Hugging Face image-classification pipeline per model, keeps loaded models
-warm in RAM, and returns the raw transformers prediction list.
+The frontend sends image and video analysis requests to this FastAPI app.
+Image models are lazy-loaded Hugging Face pipelines; video inference is routed
+to the local CViT module in backend/video and returns per-frame evidence.
 
-Run:
+Run from the backend folder:
     pip install -r requirements.txt
     uvicorn server:app --reload
 
 Optional:
-    INSPEC_DEVICE=0      Use CUDA device 0 instead of CPU.
+    INSPEC_DEVICE=0      Use CUDA device 0 for Hugging Face image models.
     HF_TOKEN=...         Used by transformers/HF Hub if a model needs auth.
-
-If a local .env file exists, simple KEY=value lines are loaded into the
-process environment before transformers is imported.
+    DATABASE_URL=...     Enables saved analyses and benchmark history.
 """
 
 import asyncio
 import io
 import logging
 import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -37,8 +36,10 @@ log = logging.getLogger("inspec")
 Image.MAX_IMAGE_PIXELS = 30_000_000
 
 
-def load_dotenv_file(path: Path) -> None:
-    """Load simple KEY=value pairs without adding another dependency."""
+BACKEND_DIR = Path(__file__).resolve().parent
+
+
+def load_env_file(path: Path) -> None:
     if not path.exists():
         return
 
@@ -53,9 +54,7 @@ def load_dotenv_file(path: Path) -> None:
             os.environ[key] = value
 
 
-BACKEND_DIR = Path(__file__).resolve().parent
-load_dotenv_file(BACKEND_DIR / ".env")
-load_dotenv_file(Path.cwd() / ".env")
+load_env_file(BACKEND_DIR / ".env")
 
 
 MODEL_IDS = [
@@ -65,7 +64,7 @@ MODEL_IDS = [
     "prithivMLmods/Deepfake-Detection-Exp-02-21",
     "Wvolf/ViT_Deepfake_Detection",
     "dima806/deepfake_vs_real_image_detection",
-    "Hemg/Deepfake-image-detection",
+    "Hemg/Deepfake-Detection",
     "Organika/sdxl-detector",
     "Heem2/AI-vs-Real-Image-Detection",
     "umm-maybe/AI-image-detector",
@@ -85,6 +84,8 @@ MODEL_META = [
     {"id": MODEL_IDS[8], "name": "AI vs Real Image", "author": "Heem2"},
     {"id": MODEL_IDS[9], "name": "AI Image Detector", "author": "umm-maybe"},
 ]
+
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".mpeg", ".mpg"}
 
 DEVICE = int(os.getenv("INSPEC_DEVICE", "-1"))
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -136,6 +137,25 @@ class SingleImageCreate(BaseModel):
     results: List[SingleImageModelResult] = Field(default_factory=list)
 
 
+class VideoFrameResult(BaseModel):
+    index: int
+    frame_number: int = 0
+    timestamp_ms: int = 0
+    prediction: str
+    confidence: float = 0
+    face_count: int = 0
+    thumbnail: str = ""
+
+
+class VideoAnalysisCreate(BaseModel):
+    file_name: str
+    file_size: int = 0
+    mime_type: str = "video/mp4"
+    prediction: str
+    confidence: float = 0
+    frames: List[VideoFrameResult] = Field(default_factory=list)
+
+
 def _build_pipeline(model_id: str):
     """Synchronous pipeline creation. Run from a worker thread.
 
@@ -176,6 +196,15 @@ async def get_pipeline(model_id: str):
         pipe = await asyncio.to_thread(_build_pipeline, model_id)
         _pipelines[model_id] = pipe
         return pipe
+
+
+def _predict_video_sync(video_path: str) -> dict:
+    try:
+        from backend.video.predictor import predict_single
+    except ModuleNotFoundError:
+        from video.predictor import predict_single
+
+    return predict_single(video_path)
 
 
 def _db_connect():
@@ -257,6 +286,42 @@ def _init_db_sync() -> None:
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_single_image_model_results_run_id ON single_image_model_results(run_id)"
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS video_runs (
+                    id BIGSERIAL PRIMARY KEY,
+                    file_name TEXT NOT NULL,
+                    file_size INTEGER NOT NULL DEFAULT 0,
+                    mime_type TEXT NOT NULL DEFAULT 'video/mp4',
+                    prediction TEXT NOT NULL,
+                    confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    frame_count INTEGER NOT NULL DEFAULT 0,
+                    real_count INTEGER NOT NULL DEFAULT 0,
+                    fake_count INTEGER NOT NULL DEFAULT 0,
+                    no_face_count INTEGER NOT NULL DEFAULT 0,
+                    thumbnail_data_url TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS video_frame_results (
+                    id BIGSERIAL PRIMARY KEY,
+                    run_id BIGINT NOT NULL REFERENCES video_runs(id) ON DELETE CASCADE,
+                    frame_index INTEGER NOT NULL,
+                    frame_number INTEGER NOT NULL DEFAULT 0,
+                    timestamp_ms INTEGER NOT NULL DEFAULT 0,
+                    prediction TEXT NOT NULL,
+                    confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    face_count INTEGER NOT NULL DEFAULT 0,
+                    thumbnail_data_url TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_video_frame_results_run_id ON video_frame_results(run_id)"
+            )
         conn.commit()
     _db_ready = True
 
@@ -318,6 +383,8 @@ def _save_benchmark_sync(payload: BenchmarkCreate) -> dict:
 
 
 def _list_benchmarks_sync() -> List[dict]:
+    if not DATABASE_URL:
+        return []
     _init_db_sync()
     with _db_connect() as conn:
         with conn.cursor() as cur:
@@ -471,6 +538,8 @@ def _save_single_image_sync(payload: SingleImageCreate) -> dict:
 
 
 def _list_single_images_sync() -> List[dict]:
+    if not DATABASE_URL:
+        return []
     _init_db_sync()
     with _db_connect() as conn:
         with conn.cursor() as cur:
@@ -556,13 +625,175 @@ def _get_single_image_sync(run_id: int) -> Optional[dict]:
     }
 
 
+def _save_video_sync(payload: VideoAnalysisCreate) -> dict:
+    _init_db_sync()
+    real_count = sum(1 for frame in payload.frames if frame.prediction == "REAL")
+    fake_count = sum(1 for frame in payload.frames if frame.prediction == "FAKE")
+    no_face_count = sum(1 for frame in payload.frames if frame.prediction == "NO_FACE")
+    thumbnail = next((frame.thumbnail for frame in payload.frames if frame.thumbnail), "")
+
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO video_runs (
+                    file_name, file_size, mime_type, prediction, confidence, frame_count,
+                    real_count, fake_count, no_face_count, thumbnail_data_url
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, created_at
+                """,
+                (
+                    payload.file_name,
+                    payload.file_size,
+                    payload.mime_type,
+                    payload.prediction,
+                    payload.confidence,
+                    len(payload.frames),
+                    real_count,
+                    fake_count,
+                    no_face_count,
+                    thumbnail,
+                ),
+            )
+            run_id, created_at = cur.fetchone()
+
+            for frame in payload.frames:
+                cur.execute(
+                    """
+                    INSERT INTO video_frame_results (
+                        run_id, frame_index, frame_number, timestamp_ms, prediction,
+                        confidence, face_count, thumbnail_data_url
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        run_id,
+                        frame.index,
+                        frame.frame_number,
+                        frame.timestamp_ms,
+                        frame.prediction,
+                        frame.confidence,
+                        frame.face_count,
+                        frame.thumbnail,
+                    ),
+                )
+
+        conn.commit()
+
+    return {"id": run_id, "created_at": created_at.isoformat()}
+
+
+def _list_videos_sync() -> List[dict]:
+    if not DATABASE_URL:
+        return []
+    _init_db_sync()
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, file_name, file_size, mime_type, prediction, confidence,
+                       frame_count, real_count, fake_count, no_face_count,
+                       thumbnail_data_url, created_at
+                FROM video_runs
+                ORDER BY created_at DESC
+                LIMIT 24
+                """
+            )
+            rows = cur.fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "file_name": row[1],
+            "file_size": row[2],
+            "mime_type": row[3],
+            "prediction": row[4],
+            "confidence": row[5],
+            "frame_count": row[6],
+            "real_count": row[7],
+            "fake_count": row[8],
+            "no_face_count": row[9],
+            "thumbnail_data_url": row[10],
+            "created_at": row[11].isoformat(),
+        }
+        for row in rows
+    ]
+
+
+def _get_video_sync(run_id: int) -> Optional[dict]:
+    _init_db_sync()
+    with _db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, file_name, file_size, mime_type, prediction, confidence,
+                       frame_count, real_count, fake_count, no_face_count,
+                       thumbnail_data_url, created_at
+                FROM video_runs
+                WHERE id = %s
+                """,
+                (run_id,),
+            )
+            run = cur.fetchone()
+            if not run:
+                return None
+
+            cur.execute(
+                """
+                SELECT frame_index, frame_number, timestamp_ms, prediction,
+                       confidence, face_count, thumbnail_data_url
+                FROM video_frame_results
+                WHERE run_id = %s
+                ORDER BY frame_index ASC
+                """,
+                (run_id,),
+            )
+            rows = cur.fetchall()
+
+    return {
+        "id": run[0],
+        "file_name": run[1],
+        "file_size": run[2],
+        "mime_type": run[3],
+        "prediction": run[4],
+        "confidence": run[5],
+        "frame_count": run[6],
+        "real_count": run[7],
+        "fake_count": run[8],
+        "no_face_count": run[9],
+        "thumbnail_data_url": run[10],
+        "created_at": run[11].isoformat(),
+        "frames": [
+            {
+                "index": row[0],
+                "frame_number": row[1],
+                "timestamp_ms": row[2],
+                "prediction": row[3],
+                "confidence": row[4],
+                "face_count": row[5],
+                "thumbnail": row[6],
+            }
+            for row in rows
+        ],
+    }
+
+
 app = FastAPI(title="InSpec Local Inference Server", version="4.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 
@@ -669,6 +900,73 @@ async def get_single_image(run_id: int):
     if not image:
         raise HTTPException(404, "Image analysis not found.")
     return image
+
+
+@app.post("/api/videos")
+async def create_video(payload: VideoAnalysisCreate):
+    try:
+        return await asyncio.to_thread(_save_video_sync, payload)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to save video analysis")
+        raise HTTPException(500, f"Could not save video analysis. {type(e).__name__}: {str(e)[:200]}")
+
+
+@app.get("/api/videos")
+async def list_videos():
+    try:
+        return {"videos": await asyncio.to_thread(_list_videos_sync)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to list video analyses")
+        raise HTTPException(500, f"Could not list video analyses. {type(e).__name__}: {str(e)[:200]}")
+
+
+@app.get("/api/videos/{run_id}")
+async def get_video(run_id: int):
+    try:
+        video = await asyncio.to_thread(_get_video_sync, run_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to load video analysis")
+        raise HTTPException(500, f"Could not load video analysis. {type(e).__name__}: {str(e)[:200]}")
+
+    if not video:
+        raise HTTPException(404, "Video analysis not found.")
+    return video
+
+
+@app.post("/api/video/predict")
+async def predict_video(file: UploadFile = File(...)):
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in VIDEO_EXTENSIONS:
+        raise HTTPException(400, "File must be a supported video format.")
+
+    if file.content_type and not file.content_type.startswith("video/") and file.content_type != "application/octet-stream":
+        raise HTTPException(400, "File must be a video.")
+
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+            temp_path = temp.name
+            while chunk := await file.read(1024 * 1024):
+                temp.write(chunk)
+
+        return await asyncio.to_thread(_predict_video_sync, temp_path)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Video inference failed")
+        raise HTTPException(500, f"Video inference failed. {type(e).__name__}: {str(e)[:200]}")
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
 @app.post("/api/predict")

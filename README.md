@@ -1,51 +1,57 @@
 # InSpec AI
 
-InSpec AI is a local deepfake and AI-image analysis tool with a Next.js frontend and a FastAPI inference backend.
+InSpec AI is a local forensic media analysis dashboard for detecting deepfake
+and AI-generated content. It uses one FastAPI backend for image and video
+inference, and one Next.js frontend for the user interface.
 
 ## Project Structure
 
 ```text
 InSpecAI/
-  backend/     FastAPI + Transformers inference server
-  inspecai/    Next.js frontend
+  backend/
+    server.py
+    requirements.txt
+    video/
+      predictor.py
+      model/
+      weight/
+  inspecai/
+    app/
+    package.json
 ```
 
-## Prerequisites
+## Requirements
 
-- Node.js 20+
 - Python 3.10+
-- `pip`
+- Node.js 20+
+- npm
+- pip
 
 ## Backend Setup
 
-From the project root:
+Open a terminal in the project root, then go to the backend folder:
 
-```bash
+```bat
+cd backend
+```
+
+Create and activate the backend virtual environment:
+
+```bat
 python -m venv venv
 venv\Scripts\activate
-pip install -r backend/requirements.txt
 ```
 
-Optional Hugging Face token:
+Install backend dependencies:
 
-```bash
-copy backend\.env.example backend\.env
+```bat
+pip install -r requirements.txt
 ```
-
-Then set `HF_TOKEN` inside `backend/.env` if required.
-
-Optional Neon benchmark storage:
-
-```text
-DATABASE_URL=postgresql://user:password@host/database?sslmode=require
-```
-
-When `DATABASE_URL` is present, batch benchmark runs are saved automatically and can be reopened from the saved benchmark cards in the Batch view.
 
 Run the backend:
 
-```bash
-uvicorn backend.server:app --reload
+```bat
+uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Backend URL:
@@ -54,13 +60,33 @@ Backend URL:
 http://localhost:8000
 ```
 
+Optional saved-history database:
+
+```bat
+copy .env.example .env
+```
+
+Then edit `backend\.env` and set a real `DATABASE_URL`. Without a database URL,
+the app still runs inference, but saved image/video/benchmark history will be
+empty.
+
 ## Frontend Setup
 
-From the frontend folder:
+Open a second terminal in the project root, then go to the frontend folder:
 
-```bash
+```bat
 cd inspecai
+```
+
+Install frontend dependencies:
+
+```bat
 npm install
+```
+
+Run the frontend:
+
+```bat
 npm run dev
 ```
 
@@ -68,6 +94,31 @@ Frontend URL:
 
 ```text
 http://localhost:3000
+```
+
+## API Endpoints
+
+```text
+GET  /api/health
+GET  /api/models
+POST /api/predict
+POST /api/video/predict
+```
+
+Saved-history endpoints:
+
+```text
+GET  /api/single-images
+POST /api/single-images
+GET  /api/single-images/{id}
+
+GET  /api/videos
+POST /api/videos
+GET  /api/videos/{id}
+
+GET  /api/benchmarks
+POST /api/benchmarks
+GET  /api/benchmarks/{id}
 ```
 
 ## Dataset Format
@@ -82,15 +133,20 @@ dataset/
     image_001.jpg
 ```
 
-Supported formats: JPG, JPEG, PNG, WEBP.
+Supported image formats:
+
+```text
+JPG, JPEG, PNG, WEBP
+```
+
+Supported video formats:
+
+```text
+MP4, AVI, MOV, MKV, WEBM, MPEG, MPG
+```
 
 ## Notes
 
-- First model runs may be slow because weights download locally.
-- CPU is used by default.
-- To use CUDA device 0:
-
-```bash
-set INSPEC_DEVICE=0
-uvicorn backend.server:app --reload
-```
+- Image models are loaded lazily on first use.
+- The CViT video model is loaded lazily on first video analysis.
+- First runs can be slow while model weights load or download.

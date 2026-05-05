@@ -14,8 +14,25 @@ const API_BASE = "http://localhost:8000";
 
 type Verdict = "REAL" | "FAKE";
 type Mode = "single" | "batch";
+type MediaKind = "image" | "video";
 type StatusKind = "" | "ok" | "err" | "warn";
 type ModelRunStatus = "IDLE" | "RUNNING" | "REAL" | "FAKE" | "ERROR";
+
+type VideoResult = {
+  prediction: "REAL" | "FAKE" | "NO_FACE";
+  confidence: number;
+  frames?: VideoFrameResult[];
+};
+
+type VideoFrameResult = {
+  index: number;
+  frame_number: number;
+  timestamp_ms: number;
+  prediction: "REAL" | "FAKE" | "NO_FACE";
+  confidence: number;
+  face_count: number;
+  thumbnail: string;
+};
 
 type ModelMeta = {
   id: string;
@@ -121,6 +138,25 @@ type SavedSingleImageDetail = SavedSingleImageSummary & {
   results: SavedSingleImageResult[];
 };
 
+type SavedVideoSummary = {
+  id: number;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
+  prediction: "REAL" | "FAKE" | "NO_FACE";
+  confidence: number;
+  frame_count: number;
+  real_count: number;
+  fake_count: number;
+  no_face_count: number;
+  thumbnail_data_url: string;
+  created_at: string;
+};
+
+type SavedVideoDetail = SavedVideoSummary & {
+  frames: VideoFrameResult[];
+};
+
 const MODELS: ModelMeta[] = [
   {
     id: "prithivMLmods/Deep-Fake-Detector-v2-Model",
@@ -183,7 +219,7 @@ const MODELS: ModelMeta[] = [
     fakeLabels: ["fake"],
   },
   {
-    id: "Hemg/Deepfake-image-detection",
+    id: "Hemg/Deepfake-Detection",
     name: "Deepfake Image Detect",
     author: "Hemg",
     arch: "ViT-Base",
@@ -226,6 +262,7 @@ const MODELS: ModelMeta[] = [
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/jpg"]);
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp"];
+const MAX_CONSECUTIVE_MODEL_ERRORS = 10;
 const TAGLINE =
   "A panel of ten neural networks examines your image - independently - and renders a forensic verdict.";
 
@@ -460,6 +497,7 @@ function Card({
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
 
   const [reportId, setReportId] = useState("IS-PENDING");
   const [reportDate, setReportDate] = useState("-- --- ----");
@@ -470,9 +508,15 @@ export default function Home() {
   const [backendOK, setBackendOK] = useState(false);
   const [loadedModelIds, setLoadedModelIds] = useState<Set<string>>(new Set());
   const [mode, setModeState] = useState<Mode>("single");
+  const [mediaKind, setMediaKind] = useState<MediaKind>("image");
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [thumbUrl, setThumbUrl] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [videoDragOver, setVideoDragOver] = useState(false);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoAnalyzing, setVideoAnalyzing] = useState(false);
+  const [videoResult, setVideoResult] = useState<VideoResult | null>(null);
+  const [videoError, setVideoError] = useState("");
   const [singleStates, setSingleStates] = useState<Record<string, SingleModelState>>(makeInitialSingleStates);
   const [datasetImages, setDatasetImages] = useState<DatasetImage[]>([]);
   const [folderMeta, setFolderMeta] = useState({ name: "dataset", real: 0, fake: 0, skipped: 0 });
@@ -492,6 +536,10 @@ export default function Home() {
   const [selectedSingleImage, setSelectedSingleImage] = useState<SavedSingleImageDetail | null>(null);
   const [loadingSingleImageId, setLoadingSingleImageId] = useState<number | null>(null);
   const [singleSaveStatus, setSingleSaveStatus] = useState("");
+  const [savedVideos, setSavedVideos] = useState<SavedVideoSummary[]>([]);
+  const [selectedVideo, setSelectedVideo] = useState<SavedVideoDetail | null>(null);
+  const [loadingVideoId, setLoadingVideoId] = useState<number | null>(null);
+  const [videoSaveStatus, setVideoSaveStatus] = useState("");
 
   useEffect(() => {
     setReportId(genReportId());
@@ -516,6 +564,7 @@ export default function Home() {
     if (backendOK) {
       void loadSavedBenchmarks();
       void loadSavedSingleImages();
+      void loadSavedVideos();
     }
   }, [backendOK]);
 
@@ -673,6 +722,60 @@ export default function Home() {
     }
   }
 
+  async function loadSavedVideos() {
+    try {
+      const response = await fetch(`${API_BASE}/api/videos`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = (await response.json()) as { videos: SavedVideoSummary[] };
+      setSavedVideos(data.videos);
+    } catch {
+      setSavedVideos([]);
+    }
+  }
+
+  async function loadVideoDetail(id: number) {
+    setLoadingVideoId(id);
+    setVideoSaveStatus("");
+    try {
+      const response = await fetch(`${API_BASE}/api/videos/${id}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      setSelectedVideo((await response.json()) as SavedVideoDetail);
+    } catch {
+      setSelectedVideo(null);
+      setVideoSaveStatus("Could not load saved video.");
+    } finally {
+      setLoadingVideoId(null);
+    }
+  }
+
+  async function saveVideoAnalysis(result: VideoResult) {
+    if (!videoFile) return;
+
+    try {
+      const payload = {
+        file_name: videoFile.name,
+        file_size: videoFile.size,
+        mime_type: videoFile.type || "video/mp4",
+        prediction: result.prediction,
+        confidence: result.confidence,
+        frames: result.frames ?? [],
+      };
+
+      const response = await fetch(`${API_BASE}/api/videos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const saved = (await response.json()) as { id: number };
+      setVideoSaveStatus("Video analysis saved.");
+      await loadSavedVideos();
+      await loadVideoDetail(saved.id);
+    } catch {
+      setVideoSaveStatus("Video analyzed, but could not save to Neon.");
+    }
+  }
+
   async function saveBenchmark(stats: Record<string, BatchStat>, elapsed: number) {
     const ranked = Object.values(stats).sort((a, b) => {
       const accDelta = batchAccuracy(b) - batchAccuracy(a);
@@ -733,6 +836,45 @@ export default function Home() {
     setSingleStates(makeInitialSingleStates());
     setBenchmarkDone(false);
     setSingleSaveStatus("");
+  }
+
+  function handleVideoFile(file: File) {
+    const name = file.name.toLowerCase();
+    const ok = name.endsWith(".mp4") || name.endsWith(".avi") || name.endsWith(".mov") || name.endsWith(".mkv") || name.endsWith(".webm");
+    if (!ok) {
+      window.alert("Please upload a video file (MP4, AVI, MOV, MKV, WEBM).");
+      return;
+    }
+    setVideoFile(file);
+    setVideoResult(null);
+    setVideoError("");
+    setVideoSaveStatus("");
+  }
+
+  async function analyzeVideo() {
+    if (!videoFile) return;
+    setVideoAnalyzing(true);
+    setVideoResult(null);
+    setVideoError("");
+    try {
+      const formData = new FormData();
+      formData.append("file", videoFile);
+      const response = await fetch(`${API_BASE}/api/video/predict`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({})) as { detail?: string };
+        throw new Error(errBody.detail ?? `HTTP ${response.status}`);
+      }
+      const data = (await response.json()) as VideoResult;
+      setVideoResult(data);
+      await saveVideoAnalysis(data);
+    } catch (err) {
+      setVideoError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setVideoAnalyzing(false);
+    }
   }
 
   function removeFile() {
@@ -885,12 +1027,16 @@ export default function Home() {
         [model.id]: { ...prev[model.id], running: true, done: false },
       }));
 
-      for (const item of datasetImages) {
+      let consecutiveErrors = 0;
+
+      for (let itemIndex = 0; itemIndex < datasetImages.length; itemIndex++) {
+        const item = datasetImages[itemIndex];
         setCurrentBenchmarkPath(item.path);
 
         try {
           const raw = await callServer(model.id, item.file);
           const interpreted = interpretResult(model, raw);
+          consecutiveErrors = 0;
           setLoadedModelIds((prev) => new Set(prev).add(model.id));
           localStats[model.id].total += 1;
           localStats[model.id].correct += interpreted.verdict === item.expected ? 1 : 0;
@@ -910,6 +1056,7 @@ export default function Home() {
             };
           });
         } catch (error) {
+          consecutiveErrors++;
           localStats[model.id].errors += 1;
           localStats[model.id].lastError = error instanceof Error ? error.message : "Unknown error";
           setBatchStats((prev) => {
@@ -927,6 +1074,25 @@ export default function Home() {
 
         completed++;
         setDonePredictions(completed);
+
+        if (consecutiveErrors >= MAX_CONSECUTIVE_MODEL_ERRORS) {
+          const skipped = datasetImages.length - itemIndex - 1;
+          const skipMessage = `Skipped after ${MAX_CONSECUTIVE_MODEL_ERRORS} consecutive errors.`;
+          localStats[model.id].lastError = skipMessage;
+          setBatchStats((prev) => ({
+            ...prev,
+            [model.id]: {
+              ...prev[model.id],
+              lastError: skipMessage,
+            },
+          }));
+          if (skipped > 0) {
+            completed += skipped;
+            setDonePredictions(completed);
+          }
+          break;
+        }
+
         await new Promise((resolve) => window.setTimeout(resolve, 0));
       }
 
@@ -1001,6 +1167,36 @@ export default function Home() {
               <div className="brand-sub">Forensic Deepfake Analysis</div>
             </div>
           </div>
+
+          {/* ── Image / Video toggle ── */}
+          <div className="media-toggle" role="group" aria-label="Media type">
+            <button
+              id="toggle-image"
+              className={classNames("media-toggle-btn", mediaKind === "image" && "active")}
+              type="button"
+              onClick={() => setMediaKind("image")}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="9" cy="9" r="2" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+              IMAGE
+            </button>
+            <button
+              id="toggle-video"
+              className={classNames("media-toggle-btn", mediaKind === "video" && "active")}
+              type="button"
+              onClick={() => setMediaKind("video")}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="23 7 16 12 23 17 23 7" />
+                <rect x="1" y="5" width="15" height="14" rx="2" />
+              </svg>
+              VIDEO
+            </button>
+          </div>
+
           <div className="header-meta">
             <span className="meta-row">
               <span className="meta-key">REPORT</span>
@@ -1036,6 +1232,282 @@ export default function Home() {
           </div>
         </div>
 
+        {/* ═══════════════════════════════════════════════
+             VIDEO ANALYSIS CARD  (shown when mediaKind=video)
+        ════════════════════════════════════════════════ */}
+        {mediaKind === "video" && (
+          <Card className="upload-card">
+            <div className="card-header">
+              <span className="card-num">01</span>
+              <span className="card-title">VIDEO SPECIMEN · DEEPFAKE DETECTION</span>
+              <span className={classNames("card-status", videoFile && "done")}>
+                {videoFile ? "VIDEO LOADED" : "AWAITING VIDEO"}
+              </span>
+            </div>
+
+            {/* Drop zone */}
+            <input
+              ref={videoInputRef}
+              type="file"
+              accept="video/*"
+              hidden
+              onChange={(e) => e.target.files?.[0] && handleVideoFile(e.target.files[0])}
+            />
+            <div
+              className={classNames("upload-zone", videoDragOver && "dragover", videoFile && "has-file")}
+              style={{ minHeight: 200, cursor: videoFile ? "default" : "pointer" }}
+              onClick={() => { if (!videoFile) videoInputRef.current?.click(); }}
+              onDragOver={(e) => { e.preventDefault(); setVideoDragOver(true); }}
+              onDragLeave={() => setVideoDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setVideoDragOver(false);
+                const f = e.dataTransfer.files[0];
+                if (f) handleVideoFile(f);
+              }}
+            >
+              {!videoFile ? (
+                <div className="upload-empty">
+                  <div className="icon-frame">
+                    <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                      <polygon points="30 10 21 16 30 22 30 10" />
+                      <rect x="2" y="6" width="19" height="20" rx="2" />
+                    </svg>
+                  </div>
+                  <h3>Drop a video here</h3>
+                  <p>or <span className="link">browse files</span> from your device</p>
+                  <div className="formats">
+                    <span className="fmt-pill">MP4</span>
+                    <span className="fmt-pill">AVI</span>
+                    <span className="fmt-pill">MOV</span>
+                    <span className="fmt-pill">MKV</span>
+                    <span className="fmt-pill">WEBM</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="file-preview visible">
+                  <div className="info-panel" style={{ flex: 1 }}>
+                    <InfoRow label="FILE" value={videoFile.name} />
+                    <InfoRow label="SIZE" value={fmtSize(videoFile.size)} mono />
+                    <InfoRow label="TYPE" value={videoFile.type || "video"} mono />
+                    <div className="info-bottom">
+                      <div className="ready-badge">
+                        <div className="ready-dot" />
+                        <span>VIDEO READY</span>
+                      </div>
+                      <button
+                        className="remove-btn"
+                        title="Remove video"
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setVideoFile(null); setVideoResult(null); setVideoError(""); setVideoSaveStatus(""); if (videoInputRef.current) videoInputRef.current.value = ""; }}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Analyze button */}
+            <div className="action-row">
+              <button
+                className="run-all-btn"
+                disabled={!videoFile || videoAnalyzing}
+                onClick={analyzeVideo}
+                type="button"
+              >
+                <PlayIcon />
+                <span>{videoAnalyzing ? "ANALYZING VIDEO..." : "ANALYZE VIDEO"}</span>
+              </button>
+              <div className="action-hint">Powered by CViT deepfake detector · unified API :8000</div>
+            </div>
+
+            {/* Result display */}
+            {videoAnalyzing && (
+              <div className="video-result-box analyzing">
+                <div className="mini-spinner" />
+                <span>Running CViT inference on video frames — this may take a moment…</span>
+              </div>
+            )}
+            {!videoAnalyzing && videoError && (
+              <div className="video-result-box error">
+                <span className="video-result-icon">✕</span>
+                <div>
+                  <div className="video-result-label">ERROR</div>
+                  <div className="video-result-detail">{videoError}</div>
+                </div>
+              </div>
+            )}
+            {!videoAnalyzing && videoResult && (
+              <div className={classNames("video-result-box", videoResult.prediction === "FAKE" ? "fake" : videoResult.prediction === "REAL" ? "real" : "warn")}>
+                <span className="video-result-icon">
+                  {videoResult.prediction === "FAKE" ? "⚠" : videoResult.prediction === "REAL" ? "✓" : "?"}
+                </span>
+                <div>
+                  <div className="video-result-label">{videoResult.prediction}</div>
+                  <div className="video-result-detail">
+                    {videoResult.prediction === "NO_FACE"
+                      ? "No face detected in the video frames."
+                      : `Confidence: ${Math.round(videoResult.confidence * 100)}%`}
+                  </div>
+                </div>
+              </div>
+            )}
+            {!videoAnalyzing && videoResult?.frames && videoResult.frames.length > 0 && (
+              <div className="video-frame-panel">
+                <div className="video-frame-head">
+                  <span>FRAME EVIDENCE</span>
+                  <span className="mono">{videoResult.frames.length} sampled frames</span>
+                </div>
+                <div className="video-frame-grid">
+                  {videoResult.frames.map((frame) => (
+                    <div
+                      key={`${frame.index}-${frame.frame_number}`}
+                      className={classNames(
+                        "video-frame-card",
+                        frame.prediction === "FAKE" ? "fake" : frame.prediction === "REAL" ? "real" : "warn",
+                      )}
+                    >
+                      <div className="video-frame-thumb">
+                        {frame.thumbnail ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={frame.thumbnail} alt={`Frame ${frame.index}`} />
+                        ) : (
+                          <span>NO PREVIEW</span>
+                        )}
+                        <span className="video-frame-badge">{frame.prediction}</span>
+                      </div>
+                      <div className="video-frame-meta">
+                        <span>#{String(frame.index).padStart(2, "0")} - frame {frame.frame_number}</span>
+                        <span>{fmtTime(frame.timestamp_ms)} - {frame.face_count} face{frame.face_count === 1 ? "" : "s"}</span>
+                        <strong>{frame.prediction === "NO_FACE" ? "No face detected" : `${Math.round(frame.confidence * 100)}% confidence`}</strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {mediaKind === "video" && (
+          <Card className="leaderboard-card visible">
+            <div className="card-header">
+              <span className="card-num">02</span>
+              <span className="card-title">SAVED VIDEO ANALYSES · NEON</span>
+              <span className={classNames("card-status", savedVideos.length > 0 && "done")}>{savedVideos.length ? `${savedVideos.length} STORED` : "NO DATA"}</span>
+            </div>
+
+            {videoSaveStatus && <div className="save-status">{videoSaveStatus}</div>}
+
+            <div className="single-history">
+              {savedVideos.length === 0 ? (
+                <div className="lb-empty">NO SAVED VIDEOS</div>
+              ) : (
+                savedVideos.map((video) => (
+                  <button
+                    key={video.id}
+                    className={classNames("single-history-card", selectedVideo?.id === video.id && "active")}
+                    type="button"
+                    disabled={loadingVideoId !== null}
+                    onClick={() => loadVideoDetail(video.id)}
+                  >
+                    {video.thumbnail_data_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={video.thumbnail_data_url} alt={video.file_name} />
+                    ) : (
+                      <span className="video-history-placeholder">VIDEO</span>
+                    )}
+                    <span>
+                      <strong>{video.file_name}</strong>
+                      <small>{fmtDateTime(video.created_at)}</small>
+                    </span>
+                    <span>
+                      {loadingVideoId === video.id ? (
+                        <>
+                          <strong className="single-loading-word">LOAD</strong>
+                          <small className="single-card-loader"><i className="mini-spinner" /> frames</small>
+                        </>
+                      ) : (
+                        <>
+                          <strong>{video.prediction}</strong>
+                          <small>{Math.round(video.confidence * 100)}% · {video.frame_count} frames</small>
+                        </>
+                      )}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+
+            {loadingVideoId !== null && (
+              <div className="single-detail-loader">
+                <i className="mini-spinner" />
+                <span>LOADING SAVED VIDEO RESULTS</span>
+              </div>
+            )}
+
+            {loadingVideoId === null && selectedVideo && (
+              <>
+                <div className={classNames("video-result-box", selectedVideo.prediction === "FAKE" ? "fake" : selectedVideo.prediction === "REAL" ? "real" : "warn")}>
+                  <span className="video-result-icon">
+                    {selectedVideo.prediction === "FAKE" ? "⚠" : selectedVideo.prediction === "REAL" ? "✓" : "?"}
+                  </span>
+                  <div>
+                    <div className="video-result-label">{selectedVideo.prediction}</div>
+                    <div className="video-result-detail">
+                      Confidence: {Math.round(selectedVideo.confidence * 100)}% · REAL {selectedVideo.real_count} · FAKE {selectedVideo.fake_count} · NO FACE {selectedVideo.no_face_count}
+                    </div>
+                  </div>
+                </div>
+
+                {selectedVideo.frames.length > 0 && (
+                  <div className="video-frame-panel">
+                    <div className="video-frame-head">
+                      <span>{selectedVideo.file_name}</span>
+                      <span className="mono">{selectedVideo.frames.length} saved frames</span>
+                    </div>
+                    <div className="video-frame-grid">
+                      {selectedVideo.frames.map((frame) => (
+                        <div
+                          key={`${selectedVideo.id}-${frame.index}-${frame.frame_number}`}
+                          className={classNames(
+                            "video-frame-card",
+                            frame.prediction === "FAKE" ? "fake" : frame.prediction === "REAL" ? "real" : "warn",
+                          )}
+                        >
+                          <div className="video-frame-thumb">
+                            {frame.thumbnail ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={frame.thumbnail} alt={`Saved frame ${frame.index}`} />
+                            ) : (
+                              <span>NO PREVIEW</span>
+                            )}
+                            <span className="video-frame-badge">{frame.prediction}</span>
+                          </div>
+                          <div className="video-frame-meta">
+                            <span>#{String(frame.index).padStart(2, "0")} - frame {frame.frame_number}</span>
+                            <span>{fmtTime(frame.timestamp_ms)} - {frame.face_count} face{frame.face_count === 1 ? "" : "s"}</span>
+                            <strong>{frame.prediction === "NO_FACE" ? "No face detected" : `${Math.round(frame.confidence * 100)}% confidence`}</strong>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
+        )}
+
+        {/* ═══════════════════════════════════════════════
+             IMAGE ANALYSIS CARDS  (shown when mediaKind=image)
+        ════════════════════════════════════════════════ */}
+        {mediaKind === "image" && (
         <Card className="upload-card">
           <div className="card-header">
             <span className="card-num">01</span>
@@ -1213,8 +1685,9 @@ export default function Home() {
             </div>
           </div>
         </Card>
+        )} {/* end mediaKind=image upload card */}
 
-        <Card className="models-card">
+        {mediaKind === "image" && <Card className="models-card">
           <div className="card-header">
             <span className="card-num">02</span>
             <span className="card-title">MODEL ENSEMBLE · 10 DETECTORS</span>
@@ -1236,9 +1709,9 @@ export default function Home() {
               />
             ))}
           </div>
-        </Card>
+        </Card>} {/* end models-card */}
 
-        <Card className={classNames("leaderboard-card", mode === "single" && "visible")}>
+        {mediaKind === "image" && <Card className={classNames("leaderboard-card", mode === "single" && "visible")}>
           <div className="card-header">
             <span className="card-num">03</span>
             <span className="card-title">SAVED IMAGE ANALYSES · NEON</span>
@@ -1325,9 +1798,9 @@ export default function Home() {
               </table>
             </div>
           )}
-        </Card>
+        </Card>} {/* end single-image leaderboard */}
 
-        <Card className={classNames("leaderboard-card", mode === "batch" && "visible")}>
+        {mediaKind === "image" && <Card className={classNames("leaderboard-card", mode === "batch" && "visible")}>
           <div className="card-header">
             <span className="card-num">03</span>
             <span className="card-title">MODEL LEADERBOARD · LIVE</span>
@@ -1347,9 +1820,9 @@ export default function Home() {
               rankedBatchStats.map((stat, index) => <LeaderboardRow key={stat.model.id} stat={stat} rank={index + 1} />)
             )}
           </div>
-        </Card>
+        </Card>} {/* end batch leaderboard */}
 
-        <Card className={classNames("leaderboard-card", mode === "batch" && "visible")}>
+        {mediaKind === "image" && <Card className={classNames("leaderboard-card", mode === "batch" && "visible")}>
           <div className="card-header">
             <span className="card-num">04</span>
             <span className="card-title">SAVED BENCHMARKS · NEON</span>
@@ -1439,7 +1912,7 @@ export default function Home() {
               </table>
             </div>
           )}
-        </Card>
+        </Card>} {/* end saved benchmarks */}
 
         <footer className="site-footer">
           <span>InSpec AI · Neural Authentication Engine · v4.0</span>

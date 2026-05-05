@@ -1,18 +1,12 @@
 # InSpec AI Frontend
 
-This folder contains the Next.js frontend for InSpec AI.
+Next.js frontend for the InSpec AI dashboard.
 
-The FastAPI backend lives outside this folder at:
+## Run
 
-```text
-../backend/
-```
+From this folder:
 
-## Run Frontend
-
-From this `inspecai` folder:
-
-```bash
+```bat
 npm install
 npm run dev
 ```
@@ -23,33 +17,11 @@ Open:
 http://localhost:3000
 ```
 
-## Run Backend
-
-From the project root, one level above this folder:
-
-```bash
-python -m venv venv
-venv\Scripts\activate
-pip install -r backend/requirements.txt
-uvicorn backend.server:app --reload
-```
-
-The frontend expects the backend at:
+The frontend uses the unified backend at:
 
 ```text
 http://localhost:8000
 ```
 
-## Dataset Format
-
-Batch benchmark mode expects:
-
-```text
-dataset/
-  real/
-    image_001.jpg
-  fake/
-    image_001.jpg
-```
-
-Supported image types: JPG, JPEG, PNG, and WEBP.
+Image inference uses `/api/predict`; video inference uses
+`/api/video/predict`.

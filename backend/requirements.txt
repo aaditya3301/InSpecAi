@@ -5,9 +5,15 @@ python-multipart>=0.0.9
 psycopg[binary]>=3.2
 
 # Image + ML
+einops>=0.8
+facenet-pytorch>=2.5
+numpy>=1.26
+opencv-python-headless>=4.9
 Pillow>=10.0
-transformers>=4.40
+torchvision>=0.15
+transformers>=4.40,<5
 torch>=2.0
+tqdm>=4.66
 
 # Tip: to install CPU-only torch (smaller, ~200 MB instead of ~2 GB) on a
 # machine with no GPU, run this BEFORE pip install -r requirements.txt:

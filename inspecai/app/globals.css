@@ -1149,6 +1149,20 @@ body {
     background: var(--paper);
 }
 
+.video-history-placeholder {
+    width: 54px;
+    height: 54px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--paper);
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.1em;
+    color: var(--ink-4);
+}
+
 .single-history-card span {
     min-width: 0;
     display: flex;
@@ -1356,4 +1370,220 @@ body {
     .single-detail-head img { width: 72px; height: 72px; }
     .saved-table-wrap { overflow-x: auto; }
     .saved-table { min-width: 680px; }
+    .media-toggle { order: -1; align-self: flex-start; }
+    .site-header { flex-wrap: wrap; gap: 1rem; }
 }
+
+/* ── Image / Video media-kind toggle ──────────────────────── */
+.media-toggle {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--paper-2);
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.media-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    background: transparent;
+    border: none;
+    padding: 0.55rem 1.1rem;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    color: var(--ink-3);
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+    white-space: nowrap;
+}
+
+.media-toggle-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+.media-toggle-btn:hover { background: var(--card); color: var(--ink); }
+
+.media-toggle-btn.active {
+    background: var(--ink);
+    color: var(--paper);
+}
+
+.media-toggle-btn + .media-toggle-btn {
+    border-left: 1px solid var(--line);
+}
+
+/* ── Video result box ─────────────────────────────────────── */
+.video-result-box {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1.25rem;
+    padding: 1rem 1.25rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: var(--card-tint);
+    animation: fadeUp 0.35s ease both;
+}
+
+.video-result-box.analyzing {
+    color: var(--ink-2);
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    letter-spacing: 0.06em;
+}
+
+.video-result-box.real {
+    border-color: var(--real);
+    background: var(--real-soft);
+}
+
+.video-result-box.fake {
+    border-color: var(--fake);
+    background: var(--fake-soft);
+}
+
+.video-result-box.warn {
+    border-color: var(--gold);
+    background: rgba(184, 146, 72, 0.1);
+}
+
+.video-result-box.error {
+    border-color: var(--fake);
+    background: var(--fake-soft);
+}
+
+.video-result-icon {
+    font-size: 2rem;
+    line-height: 1;
+    flex-shrink: 0;
+    width: 2.5rem;
+    text-align: center;
+}
+
+.video-result-box.real .video-result-icon { color: var(--real); }
+.video-result-box.fake .video-result-icon { color: var(--fake); }
+.video-result-box.warn .video-result-icon { color: var(--gold); }
+.video-result-box.error .video-result-icon { color: var(--fake); }
+
+.video-result-label {
+    font-family: var(--mono);
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    margin-bottom: 0.2rem;
+}
+
+.video-result-box.real .video-result-label { color: var(--real); }
+.video-result-box.fake .video-result-label { color: var(--fake); }
+.video-result-box.warn .video-result-label { color: var(--gold); }
+.video-result-box.error .video-result-label { color: var(--fake); }
+
+.video-result-detail {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--ink-3);
+    letter-spacing: 0.06em;
+}
+
+.video-frame-panel {
+    margin-top: 1rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--card-tint);
+    overflow: hidden;
+    animation: fadeUp 0.35s ease both;
+}
+
+.video-frame-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.14em;
+    color: var(--ink-3);
+}
+
+.video-frame-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 0.75rem;
+    padding: 0.9rem;
+}
+
+.video-frame-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--card);
+    overflow: hidden;
+}
+
+.video-frame-card.real { border-color: var(--real); }
+.video-frame-card.fake { border-color: var(--fake); }
+.video-frame-card.warn { border-color: var(--gold); }
+
+.video-frame-thumb {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: var(--paper-2);
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+}
+
+.video-frame-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.video-frame-thumb > span:not(.video-frame-badge) {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    color: var(--ink-4);
+}
+
+.video-frame-badge {
+    position: absolute;
+    top: 0.45rem;
+    right: 0.45rem;
+    padding: 0.18rem 0.42rem;
+    border-radius: 2px;
+    background: rgba(26, 24, 21, 0.78);
+    color: var(--paper);
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.12em;
+}
+
+.video-frame-card.real .video-frame-badge { background: var(--real); }
+.video-frame-card.fake .video-frame-badge { background: var(--fake); }
+.video-frame-card.warn .video-frame-badge { background: var(--gold); }
+
+.video-frame-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.22rem;
+    padding: 0.65rem 0.7rem 0.75rem;
+    font-family: var(--mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+}
+
+.video-frame-meta strong {
+    margin-top: 0.1rem;
+    color: var(--ink);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+}
+
+.video-frame-card.real .video-frame-meta strong { color: var(--real); }
+.video-frame-card.fake .video-frame-meta strong { color: var(--fake); }
+.video-frame-card.warn .video-frame-meta strong { color: var(--gold); }

@@ -1,52 +1,103 @@
 # InSpec AI Backend
 
-Local FastAPI inference server for the InSpec AI Next.js frontend.
+Unified FastAPI backend for image analysis, video analysis, batch benchmarks,
+and saved image-analysis history.
 
 ## Setup
 
 From the project root:
 
-```bash
+```bat
+cd backend
 python -m venv venv
 venv\Scripts\activate
-pip install -r backend/requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Run
 
-From the project root:
+From the `backend` folder with the virtual environment activated:
 
-```bash
-uvicorn backend.server:app --reload
+```bat
+uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-The API runs at:
+API base URL:
 
 ```text
 http://localhost:8000
 ```
 
-## Optional Hugging Face Token
+## Saved History
 
-Create `backend/.env`:
+Saved image, video, and benchmark history requires a database URL. To configure
+one locally:
 
-```text
-HF_TOKEN=hf_your_token_here
+```bat
+copy .env.example .env
 ```
 
-## Optional Neon Database
-
-Add a Neon/Postgres URL to `backend/.env`:
+Then edit `.env` and set:
 
 ```text
 DATABASE_URL=postgresql://user:password@host/database?sslmode=require
 ```
 
-The backend creates the benchmark tables automatically on startup. Batch benchmark results are saved after each completed run.
+Without `DATABASE_URL`, inference still works and history endpoints return empty
+lists.
 
-## Optional GPU Mode
+## Layout
 
-```bash
-set INSPEC_DEVICE=0
-uvicorn backend.server:app --reload
+```text
+backend/
+  server.py
+  requirements.txt
+  video/
+    predictor.py
+    model/
+      cvit.py
+      pred_func.py
+    weight/
+      cvit2_deepfake_detection_ep_50.pth
+      deepdeepfake_cvit_gpu_ep50.pkl
 ```
+
+## Endpoints
+
+```text
+GET  /api/health
+GET  /api/models
+POST /api/predict
+POST /api/video/predict
+```
+
+Persistence endpoints are available when `DATABASE_URL` is configured in the
+terminal environment:
+
+```text
+GET  /api/single-images
+POST /api/single-images
+GET  /api/single-images/{id}
+
+GET  /api/videos
+POST /api/videos
+GET  /api/videos/{id}
+
+GET  /api/benchmarks
+POST /api/benchmarks
+GET  /api/benchmarks/{id}
+```
+
+## Optional Environment Variables
+
+Set these before starting the backend if needed:
+
+```bat
+set HF_TOKEN=hf_your_token_here
+set DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+set INSPEC_DEVICE=0
+```
+
+- `HF_TOKEN` is used for private or gated Hugging Face models.
+- `DATABASE_URL` enables saved results and benchmark history.
+- `INSPEC_DEVICE=0` runs Hugging Face image models on CUDA device 0.
