@@ -37,7 +37,6 @@ dist/
 uploads/
 backend/uploads/
 backend/video/uploads/
-backend/video/samples/
 backend/video/weight/
 tmp/
 temp/
